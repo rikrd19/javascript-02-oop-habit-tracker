@@ -1,0 +1,26 @@
+{
+  "name": "javascript-02-oop-habit-tracker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "live-server src",
+    "start": "http-server src -p 8080"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rikrd19/javascript-02-oop-habit-tracker.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/rikrd19/javascript-02-oop-habit-tracker/issues"
+  },
+  "homepage": "https://github.com/rikrd19/javascript-02-oop-habit-tracker#readme",
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "live-server": "^1.2.2",
+    "serve": "^14.2.6"
+  }
+}
