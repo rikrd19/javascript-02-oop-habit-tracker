@@ -1,6 +1,11 @@
+import { Habit } from "./models/Habit.js";
+import { TimedHabit } from "./models/TimedHabit.js";
+import { StorageService } from "./services/StorageService.js";
+
 const MAX_HABITS = 5;
 
-const habits = [];
+// Load persisted habits from localStorage or initialize empty collection
+let habits = StorageService.loadHabits();
 
 const motivationalQuotes = [
   "La fuerza no viene de la capacidad. Viene de la voluntad.",
@@ -27,325 +32,6 @@ const motivationalQuotes = [
 
 let dailyQuoteText = getRandomQuote();
 
-class Error {
-  message;
-  stack;
-  name = "Error";
-}
-
-class DomainError extends Error {
-  constructor(message, code) {
-    super(message);
-    this.name = "DomainError";
-    this.code = code;
-  }
-}
-
-const ERROR_CODES = {
-  INVALID_NAME: "INVALID_NAME",
-  INVALID_FREQUENCY: "INVALID_FREQUECTY",
-  DUPLICATE_CHECKIN: "DUPLICATE_CHECKIN",
-  INVALID_DATE: "INVALID_DATE",
-  FUTURE_DATE: "FUTURE_DATE",
-  INVALID_TARGET_MINUTES: "INVALID_TARGET_MINUTES",
-};
-
-class LogTracker {
-  #dates = [];
-
-  addLog(date) {
-    if (typeof date !== "string" || date.length !== 10) {
-      return null;
-    }
-    this.#dates.push(date);
-    return date;
-  }
-
-  getLogs() {
-    return [...this.#dates];
-  }
-
-  removeLog(date) {
-    const index = this.#dates.findIndex((d) => d === date);
-    if (index !== -1) {
-      this.#dates.splice(index, 1);
-      return true;
-    }
-    return false;
-  }
-}
-
-class DailyStreakCalculator {
-  calculate(habit, logs, today) {
-    if (logs.length === 0) {
-      return 0;
-    }
-
-    const sortedLogs = [...logs].sort((a, b) => b.localeCompare(a));
-
-    let streak = 0;
-    let currentDate = new Date(today);
-    currentDate.setHours(0, 0, 0, 0);
-
-    for (let i = 0; i < sortedLogs.length; i++) {
-      const expectedDate = this.#getDateString(currentDate);
-
-      if (sortedLogs[i] === expectedDate) {
-        streak++;
-        currentDate.setDate(currentDate.getDate() - 1);
-      } else {
-        break;
-      }
-    }
-
-    return streak;
-  }
-
-  #getDateString(date) {
-    return date.toISOString().split("T")[0];
-  }
-}
-
-class WeeklyStreakCalculator {
-  calculate(habit, logs, today) {
-    if (logs.length === 0) {
-      return 0;
-    }
-
-    const weeks = this.#groupByWeek(logs);
-    const sortedWeeks = Object.keys(weeks).sort((a, b) => b.localeCompare(a));
-
-    let streak = 0;
-    let expectedWeek = this.#getWeekKey(today);
-
-    for (const week of sortedWeeks) {
-      if (week === expectedWeek) {
-        streak++;
-        expectedWeek = this.#getPreviousWeek(expectedWeek);
-      } else {
-        break;
-      }
-    }
-
-    return streak;
-  }
-
-  #groupByWeek(logs) {
-    const weeks = {};
-    logs.forEach((log) => {
-      const weekKey = this.#getWeekKey(new Date(log + "T00:00:00"));
-      if (!weeks[weekKey]) {
-        weeks[weekKey] = [];
-      }
-      weeks[weekKey].push(log);
-    });
-    return weeks;
-  }
-
-  #getWeekKey(date) {
-    const year = date.getFullYear();
-    const week = this.#getWeekNumber(date);
-    return `${year}-W${String(week).padStart(2, "0")}`;
-  }
-
-  #getWeekNumber(date) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
-    const yearStart = new Date(d.getFullYear(), 0, 1);
-    const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-    return weekNo;
-  }
-
-  #getPreviousWeek(weekKey) {
-    const [year, weekStr] = weekKey.split("-W");
-    let week = parseInt(weekStr);
-    let y = parseInt(year);
-
-    week--;
-    if (week < 1) {
-      y--;
-      week = 52;
-    }
-
-    return `${y}-W${String(week).padStart(2, "0")}`;
-  }
-}
-
-const STREK_CALCULATORS = {
-  daily: new DailyStreakCalculator(),
-  weekly: new WeeklyStreakCalculator(),
-};
-
-/*
-
-class Habit {
-  #name;
-  #frequency;
-  #id;
-  #tracker;
-  #createdAt;
-
-  constructor(name, frequency) {
-    this.#id = Habit.createId();
-    this.name = name;
-    this.frequency = frequency;
-    this.#createdAt = new Date().toISOString();
-    this.#tracker = new LogTracker();
-  }
-
-  get name() {
-    return this.#name;
-  }
-
-  get createdAt() {
-    return this.#createdAt;
-  }
-
-  set name(value) {
-    const normalized = value.trim();
-    if (normalized.length < 3) {
-      throw new DomainError(
-        "El nombre del hábito debe tener al menos 3 caracteres.",
-        ERROR_CODES.INVALID_NAME,
-      );
-    }
-    this.#name = normalized;
-  }
-
-  get frequency() {
-    return this.#frequency;
-  }
-
-  set frequency(value) {
-    const validFrequencies = ["daily", "weekly"];
-    if (!validFrequencies.includes(value)) {
-      throw new DomainError(
-        'La frecuencia debe ser "daily" o "weekly".',
-        ERROR_CODES.INVALID_FREQUENCY,
-      );
-    }
-    this.#frequency = value;
-  }
-
-  get id() {
-    return this.#id;
-  }
-
-  rename(newName) {
-    this.name = newName;
-  }
-
-  registerCheckIn(date) {
-    const created = this.#tracker.addLog(date);
-    if (!created) {
-      return null;
-    }
-    return {
-      habitId: this.id,
-      date: created,
-    };
-  }
-
-  getLogs() {
-    return this.#tracker.getLogs();
-  }
-
-  removeCheckIn(date) {
-    return this.#tracker.removeLog(date);
-  }
-
-  calculateStreak(today = new Date()) {
-    const calculator = STREK_CALCULATORS[this.#frequency];
-    if (!calculator) {
-      return 0;
-    }
-    return calculator.calculate(this, this.getLogs(), today);
-  }
-
-  toDisplayString() {
-    return `${this.name} (${this.frequency})`;
-  }
-
-  static createId() {
-    return Date.now() + Math.floor(Math.random() * 1000);
-  }
-
-  static daily(name) {
-    return new Habit(name, "daily");
-  }
-
-  static weekly(name) {
-    return new Habit(name, "weekly");
-  }
-}
-*/
-
-/*
-class TimedHabit extends Habit {
-  #targetMinutes;
-  constructor(name, frequency, targetMinutes) {
-    super(name, frequency);
-    this.targetMinutes = targetMinutes;
-  }
-
-  get targetMinutes() {
-    return this.#targetMinutes;
-  }
-
-  set targetMinutes(value) {
-    const minutes = Number(value);
-    if (isNaN(minutes) || minutes <= 0) {
-      throw new Error("El Objetivo de tiempo debe de ser un número positivo");
-    }
-    this.#targetMinutes = minutes;
-  }
-
-  toDisplayString() {
-    const baseString = super.toDisplayString();
-    return `${baseString} ${this.#targetMinutes} `;
-  }
-
-  static daily(name, targetMinutes) {
-    return new TimedHabit(name, "daily", targetMinutes);
-  }
-
-  static weekly(name, targetMinutes) {
-    return new TimedHabit(name, "weekly", targetMinutes);
-  }
-}
-*/
-
-
-/* ** Factory function approach (commented out) **
-// function createHabitObject(name, frequency) {
-//   return {
-//     id: ++habitIdCounter,
-//     name: name,
-//     frequency: frequency,
-//     createdAt: new Date().toISOString(),
-//     rename: function (newName) {
-//       this.name = newName;
-//     },
-//   };
-// }
-//
-*/
-
-let habitIdCounter = 0; // <-- Necesario para evitar "ReferenceError: habitIdCounter is not defined
-
-// ** Constructor + Prototype (compartido) approach **
-function Habit(name, frequency) {
-  this.id = ++habitIdCounter;
-  this.name = name;
-  this.frequency = frequency;
-  this.createdAt = new Date().toISOString(); // Nos devuelve la fecha y hora actual en formato ISO 8601
-}
-
-Habit.prototype.rename = function (newName) {
-  this.name = newName;
-};
-
 function addHabit(name, frequency) {
   if (habits.length >= MAX_HABITS) {
     showMessage("Has alcanzado el límite de 5 hábitos", "error");
@@ -360,6 +46,7 @@ function addHabit(name, frequency) {
   try {
     const habit = new Habit(name.trim(), frequency);
     habits.push(habit);
+    StorageService.saveHabits(habits);
     return habit;
   } catch (error) {
     showMessage(error.message, "error");
@@ -369,13 +56,28 @@ function addHabit(name, frequency) {
 
 function logHabit(habitId, date) {
   const habit = habits.find((h) => h.id === habitId);
-
   if (!habit) {
     showMessage("Hábito no encontrado", "error");
     return null;
   }
 
-  return habit.registerCheckIn(date);
+  const result = habit.registerCheckIn(date);
+  if (result) {
+    StorageService.saveHabits(habits);
+  }
+  return result;
+}
+
+function removeLog(habitId, date) {
+  const habit = habits.find((h) => h.id === habitId);
+  if (habit) {
+    const removed = habit.removeCheckIn(date);
+    if (removed) {
+      StorageService.saveHabits(habits);
+    }
+    return removed;
+  }
+  return false;
 }
 
 function getStatistics() {
@@ -405,6 +107,8 @@ function getStatistics() {
 
 function showMessage(message, type = "success") {
   const messageBox = document.getElementById("messageBox");
+  if (!messageBox) return;
+
   messageBox.textContent = message;
   messageBox.className = `message-box ${type}`;
 
@@ -413,66 +117,135 @@ function showMessage(message, type = "success") {
   }, 3000);
 }
 
+/**
+ * Safely renders the monthly habit matrix.
+ * Uses native DOM APIs and textContent to guarantee XSS immunity.
+ */
 function renderHabits() {
   const habitsTable = document.getElementById("habitsTable");
   const habitSelect = document.getElementById("habitSelect");
   const createHabitBtn = document.getElementById("openCreateModal");
 
+  if (!habitsTable || !habitSelect || !createHabitBtn) return;
+
   if (habits.length === 0) {
-    habitsTable.innerHTML =
-      '<p class="empty-state">No hay hábitos. Haz clic en "Crear Hábito" para comenzar.</p>';
+    habitsTable.innerHTML = "";
+    const emptyMsg = document.createElement("p");
+    emptyMsg.className = "empty-state";
+    emptyMsg.textContent = 'No hay hábitos. Haz clic en "Crear Hábito" para comenzar.';
+    habitsTable.appendChild(emptyMsg);
+
     habitSelect.innerHTML = '<option value="">Selecciona un hábito</option>';
     createHabitBtn.style.display = "block";
+    renderStreaks();
     return;
   }
 
-  // Ocultar botón de crear hábito si se alcanzó el límite
-  if (habits.length >= MAX_HABITS) {
-    createHabitBtn.style.display = "none";
-  } else {
-    createHabitBtn.style.display = "block";
-  }
+  createHabitBtn.style.display = habits.length >= MAX_HABITS ? "none" : "block";
+
+  // Safely clear table container
+  habitsTable.replaceChildren();
 
   const monthDays = getCurrentMonthDays();
 
-  const headerRow = `
-    <div class="habit-row habit-header">
-      <span class="habit-day-label">Día</span>
-      ${habits.map((habit) => `<span class="habit-name">${habit.name}</span>`).join("")}
-    </div>
-  `;
+  // Header row
+  const headerRow = document.createElement("div");
+  headerRow.className = "habit-row habit-header";
 
-  const dayRows = monthDays
-    .map((date, index) => {
-      const dateObj = new Date(date + "T00:00:00");
-      const dayLabel = String(dateObj.getDate()).padStart(2, "0");
+  const dayLabel = document.createElement("span");
+  dayLabel.className = "habit-day-label";
+  dayLabel.textContent = "Día";
+  headerRow.appendChild(dayLabel);
 
-      return `
-        <div class="habit-row">
-          <span class="habit-day">${dayLabel}</span>
-          ${habits
-            .map((habit) => {
-              const habitLogs = habit.getLogs();
-              const isChecked = habitLogs.includes(date);
-              return `<div class="habit-checkbox ${isChecked ? "checked" : ""}" 
-                         data-habit-id="${habit.id}" 
-                         data-date="${date}"></div>`;
-            })
-            .join("")}
-        </div>
-      `;
-    })
-    .join("");
+  habits.forEach((habit) => {
+    const habitName = document.createElement("span");
+    habitName.className = "habit-name";
+    habitName.textContent = habit.name; // XSS safe
+    headerRow.appendChild(habitName);
+  });
+  habitsTable.appendChild(headerRow);
 
-  habitsTable.innerHTML = headerRow + dayRows;
+  // Month day rows
+  monthDays.forEach((date) => {
+    const row = document.createElement("div");
+    row.className = "habit-row";
 
-  habitSelect.innerHTML =
-    '<option value="">Selecciona un hábito</option>' +
-    habits
-      .map((habit) => `<option value="${habit.id}">${habit.name}</option>`)
-      .join("");
+    const daySpan = document.createElement("span");
+    daySpan.className = "habit-day";
+    daySpan.textContent = date.split("-")[2];
+    row.appendChild(daySpan);
 
-  attachCheckboxListeners();
+    habits.forEach((habit) => {
+      const checkbox = document.createElement("div");
+      const isChecked = habit.getLogs().includes(date);
+      checkbox.className = `habit-checkbox ${isChecked ? "checked" : ""}`;
+      checkbox.dataset.habitId = String(habit.id);
+      checkbox.dataset.date = date;
+      row.appendChild(checkbox);
+    });
+
+    habitsTable.appendChild(row);
+  });
+
+  // Update register modal select options
+  habitSelect.innerHTML = '<option value="">Selecciona un hábito</option>';
+  habits.forEach((habit) => {
+    const option = document.createElement("option");
+    option.value = String(habit.id);
+    option.textContent = habit.name;
+    habitSelect.appendChild(option);
+  });
+
+  renderStreaks();
+}
+
+/**
+ * Renders streak cards by cloning the native HTML5 <template>.
+ */
+function renderStreaks() {
+  const streaksContainer = document.getElementById("streaksContainer");
+  const template = document.getElementById("streakCardTemplate");
+  if (!streaksContainer || !template) return;
+
+  streaksContainer.replaceChildren();
+
+  if (habits.length === 0) {
+    const emptyMsg = document.createElement("p");
+    emptyMsg.className = "empty-state";
+    emptyMsg.textContent = "Las rachas aparecerán aquí cuando registres hábitos.";
+    streaksContainer.appendChild(emptyMsg);
+    return;
+  }
+
+  habits.forEach((habit) => {
+    const streak = habit.calculateStreak();
+    const logs = habit.getLogs();
+    const isActive = streak > 0;
+    const frequencyLabel = habit.frequency === "daily" ? "Diario" : "Semanal";
+    const unitLabel =
+      habit.frequency === "daily"
+        ? streak === 1
+          ? "día"
+          : "días"
+        : streak === 1
+          ? "semana"
+          : "semanas";
+    const flameIcon = isActive ? "🔥" : "⚪";
+
+    // Clone native HTML5 template
+    const clone = template.content.cloneNode(true);
+    const card = clone.querySelector(".streak-card");
+
+    card.className = `streak-card ${isActive ? "streak-active" : "streak-inactive"}`;
+    card.querySelector(".streak-habit-name").textContent = habit.name; // XSS safe
+    card.querySelector(".streak-frequency").textContent = frequencyLabel;
+    card.querySelector(".streak-flame").textContent = flameIcon;
+    card.querySelector(".streak-count").textContent = String(streak);
+    card.querySelector(".streak-label").textContent = unitLabel;
+    card.querySelector(".check-count").textContent = `✓ ${logs.length} check-ins`;
+
+    streaksContainer.appendChild(clone);
+  });
 }
 
 function getCurrentMonthDays() {
@@ -483,39 +256,12 @@ function getCurrentMonthDays() {
   const currentDay = today.getDate();
 
   for (let day = 1; day <= currentDay; day++) {
-    const date = new Date(year, month, day);
-    dates.push(date.toISOString().split("T")[0]);
+    const m = String(month + 1).padStart(2, "0");
+    const d = String(day).padStart(2, "0");
+    dates.push(`${year}-${m}-${d}`);
   }
 
   return dates;
-}
-
-function attachCheckboxListeners() {
-  document.querySelectorAll(".habit-checkbox").forEach((checkbox) => {
-    checkbox.addEventListener("click", function () {
-      const habitId = parseInt(this.dataset.habitId);
-      const date = this.dataset.date;
-
-      if (this.classList.contains("checked")) {
-        removeLog(habitId, date);
-        this.classList.remove("checked");
-        showMessage("Check-in removido", "success");
-      } else {
-        const log = logHabit(habitId, date);
-        if (log) {
-          this.classList.add("checked");
-          showMessage("Check-in registrado", "success");
-        }
-      }
-    });
-  });
-}
-
-function removeLog(habitId, date) {
-  const habit = habits.find((h) => h.id === habitId);
-  if (habit) {
-    habit.removeCheckIn(date);
-  }
 }
 
 function updateDateTime() {
@@ -544,9 +290,13 @@ function updateDateTime() {
     "Diciembre",
   ];
 
-  document.getElementById("dayNumber").textContent = now.getDate();
-  document.getElementById("monthName").textContent = months[now.getMonth()];
-  document.getElementById("dayName").textContent = days[now.getDay()];
+  const dayNumber = document.getElementById("dayNumber");
+  const monthName = document.getElementById("monthName");
+  const dayName = document.getElementById("dayName");
+
+  if (dayNumber) dayNumber.textContent = String(now.getDate());
+  if (monthName) monthName.textContent = months[now.getMonth()];
+  if (dayName) dayName.textContent = days[now.getDay()];
 }
 
 function getRandomQuote() {
@@ -556,35 +306,39 @@ function getRandomQuote() {
 
 function renderQuote() {
   const savedQuote = document.getElementById("savedQuote");
-  savedQuote.textContent = dailyQuoteText || "Escribe tu frase del día...";
+  if (savedQuote) {
+    savedQuote.textContent = dailyQuoteText || "Escribe tu frase del día...";
+  }
 }
 
 function openModal(modalId) {
   const modal = document.getElementById(modalId);
-  if (modal) {
-    modal.classList.add("active");
-  }
+  if (modal) modal.classList.add("active");
 }
 
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
-  if (modal) {
-    modal.classList.remove("active");
-  }
+  if (modal) modal.classList.remove("active");
 }
 
 function setupModalListeners() {
-  document.getElementById("openCreateModal").addEventListener("click", () => {
-    openModal("createHabitModal");
-  });
+  const openCreateModalBtn = document.getElementById("openCreateModal");
+  if (openCreateModalBtn) {
+    openCreateModalBtn.addEventListener("click", () => {
+      openModal("createHabitModal");
+    });
+  }
 
-  document.getElementById("openRegisterModal").addEventListener("click", () => {
-    if (habits.length === 0) {
-      showMessage("Primero crea un hábito", "error");
-      return;
-    }
-    openModal("registerModal");
-  });
+  const openRegisterModalBtn = document.getElementById("openRegisterModal");
+  if (openRegisterModalBtn) {
+    openRegisterModalBtn.addEventListener("click", () => {
+      if (habits.length === 0) {
+        showMessage("Primero crea un hábito", "error");
+        return;
+      }
+      openModal("registerModal");
+    });
+  }
 
   document.querySelectorAll(".close-modal").forEach((btn) => {
     btn.addEventListener("click", function () {
@@ -595,9 +349,7 @@ function setupModalListeners() {
   document.querySelectorAll(".btn-secondary").forEach((btn) => {
     btn.addEventListener("click", function () {
       const modalId = this.dataset.modal;
-      if (modalId) {
-        closeModal(modalId);
-      }
+      if (modalId) closeModal(modalId);
     });
   });
 
@@ -610,78 +362,111 @@ function setupModalListeners() {
   });
 }
 
+/**
+ * Initializes the application and binds a single event listener via delegation.
+ */
 function initApp() {
-  const today = new Date().toISOString().split("T")[0];
-  document.getElementById("checkInDate").value = today;
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const today = `${year}-${month}-${day}`;
+
+  const checkInDateInput = document.getElementById("checkInDate");
+  if (checkInDateInput) {
+    checkInDateInput.value = today;
+  }
 
   updateDateTime();
   setupModalListeners();
 
-  document.getElementById("createHabitBtn").addEventListener("click", () => {
-    const name = document.getElementById("habitName").value;
-    const frequency = document.getElementById("habitFrequency").value;
+  // Event Delegation on habitsTable (single persistent listener in memory)
+  const habitsTable = document.getElementById("habitsTable");
+  if (habitsTable) {
+    habitsTable.addEventListener("click", (e) => {
+      const checkbox = e.target.closest(".habit-checkbox");
+      if (!checkbox) return;
 
-    const habit = addHabit(name, frequency);
-    if (habit) {
-      showMessage(`Hábito "${habit.name}" creado exitosamente`, "success");
-      document.getElementById("habitName").value = "";
-      renderHabits();
-      closeModal("createHabitModal");
+      const habitId = parseInt(checkbox.dataset.habitId, 10);
+      const date = checkbox.dataset.date;
 
-      // Si se alcanzó el límite, mostrar mensaje
-      if (habits.length >= MAX_HABITS) {
-        showMessage("Has alcanzado el límite máximo de 5 hábitos", "success");
+      if (checkbox.classList.contains("checked")) {
+        removeLog(habitId, date);
+        checkbox.classList.remove("checked");
+        showMessage("Check-in removido", "success");
+        renderStreaks();
+      } else {
+        const log = logHabit(habitId, date);
+        if (log) {
+          checkbox.classList.add("checked");
+          showMessage("Check-in registrado", "success");
+          renderStreaks();
+        }
       }
-    }
-  });
+    });
+  }
 
-  document.getElementById("checkInBtn").addEventListener("click", () => {
-    const habitId = parseInt(document.getElementById("habitSelect").value);
-    const date = document.getElementById("checkInDate").value;
+  // Habit creation event listener
+  const createHabitBtn = document.getElementById("createHabitBtn");
+  if (createHabitBtn) {
+    createHabitBtn.addEventListener("click", () => {
+      const nameInput = document.getElementById("habitName");
+      const frequencyInput = document.getElementById("habitFrequency");
+      if (!nameInput || !frequencyInput) return;
 
-    if (!habitId || !date) {
-      showMessage("Selecciona un hábito y una fecha", "error");
-      return;
-    }
+      const name = nameInput.value;
+      const frequency = frequencyInput.value;
 
-    const log = logHabit(habitId, date);
-    if (log) {
-      const habit = habits.find((h) => h.id === habitId);
-      showMessage(`Check-in registrado para ${habit.name}`, "success");
-      renderHabits();
-      closeModal("registerModal");
-    }
-  });
+      const habit = addHabit(name, frequency);
+      if (habit) {
+        showMessage(`Hábito "${habit.name}" creado exitosamente`, "success");
+        nameInput.value = "";
+        renderHabits();
+        closeModal("createHabitModal");
+
+        if (habits.length >= MAX_HABITS) {
+          showMessage("Has alcanzado el límite máximo de 5 hábitos", "success");
+        }
+      }
+    });
+  }
+
+  // Manual check-in modal event listener
+  const checkInBtn = document.getElementById("checkInBtn");
+  if (checkInBtn) {
+    checkInBtn.addEventListener("click", () => {
+      const habitSelect = document.getElementById("habitSelect");
+      const dateInput = document.getElementById("checkInDate");
+      if (!habitSelect || !dateInput) return;
+
+      const habitId = parseInt(habitSelect.value, 10);
+      const date = dateInput.value;
+
+      if (!habitId || !date) {
+        showMessage("Selecciona un hábito y una fecha", "error");
+        return;
+      }
+
+      const log = logHabit(habitId, date);
+      if (log) {
+        const habit = habits.find((h) => h.id === habitId);
+        showMessage(`Check-in registrado para ${habit.name}`, "success");
+        renderHabits();
+        closeModal("registerModal");
+      }
+    });
+  }
 
   renderHabits();
   renderQuote();
 
-  console.log("Habit Tracker inicializado");
-  const demoHabit1 = Habit.daily("Leer");
-  demoHabit1.registerCheckIn("2026-01-10");
-  demoHabit1.registerCheckIn("2026-01-11");
-  demoHabit1.registerCheckIn("2026-01-12");
-
-  const demoHabit2 = Habit.weekly("Ejercicio");
-  demoHabit2.registerCheckIn("2026-01-06");
-  demoHabit2.registerCheckIn("2026-01-13");
-
-  const demoHabit3 = TimedHabit.daily("Meditar", 20);
-  demoHabit3.registerCheckIn("2026-01-10");
-  demoHabit3.registerCheckIn("2026-01-11");
-  demoHabit3.registerCheckIn("2026-01-12");
-
-  console.log("Hábito diario:", demoHabit1.toDisplayString());
-  console.log(
-    "Racha diaria:",
-    demoHabit1.calculateStreak(new Date("2026-01-13")),
-  );
-  console.log("Hábito semanal:", demoHabit2.toDisplayString());
-  console.log(
-    "Racha semanal:",
-    demoHabit2.calculateStreak(new Date("2026-01-13")),
-  );
-  console.log("Hábito con tiempo:", demoHabit3.toDisplayString());
+  // Console demonstration of inheritance and polymorphism
+  const demoHabit = new Habit("Leer", "daily");
+  const demoTimedHabit = new TimedHabit("Meditar", "daily", 20);
+  console.log("Demo Habit:", demoHabit.toDisplayString());
+  console.log("Demo TimedHabit:", demoTimedHabit.toDisplayString());
+  console.log("instanceof Habit:", demoTimedHabit instanceof Habit);
+  console.log("instanceof TimedHabit:", demoTimedHabit instanceof TimedHabit);
 }
 
 document.addEventListener("DOMContentLoaded", initApp);

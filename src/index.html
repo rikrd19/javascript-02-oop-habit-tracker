@@ -134,6 +134,25 @@
 
     <div id="messageBox" class="message-box hidden"></div>
 
-    <script src="app.js"></script>
+    <template id="streakCardTemplate">
+      <div class="streak-card">
+        <div class="streak-header">
+          <span class="streak-habit-name"></span>
+          <span class="streak-frequency"></span>
+        </div>
+        <div class="streak-body">
+          <div class="streak-number">
+            <span class="streak-flame"></span>
+            <span class="streak-count"></span>
+            <span class="streak-label"></span>
+          </div>
+          <div class="streak-stats">
+            <span class="check-count"></span>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <script type="module" src="app.js"></script>
   </body>
 </html>
